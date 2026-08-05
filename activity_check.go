@@ -75,8 +75,25 @@ func CheckActivity(logger zerolog.Logger) {
 	logger.Debug().Interface("activities", activities).Msg("PostgreSQL process details")
 
 	checkLongRunningQueries(activeActivities, logger)
-	checkThreshold(len(activeActivities), lib.DBConfig.PostgreSQL.ActivityLimit, "ActiveActivities", logger)
-	checkThreshold(len(activeActivities), lib.DBConfig.PostgreSQL.ConnectionLimit, "Connection", logger)
+	checkThreshold(len(activities), lib.DBConfig.PostgreSQL.ProcessLimit, "Process", logger)
+	checkThreshold(len(activeActivities), lib.DBConfig.PostgreSQL.ActiveQueryLimit, "ActiveQuery", logger)
+	checkConnectionPercent(len(connectionActivities), logger)
+}
+
+// checkConnectionPercent alarms when client-backend connections exceed the
+// configured percentage of the server's max_connections.
+func checkConnectionPercent(connectionCount int, logger zerolog.Logger) {
+	var maxConnections int
+	if err := Connection.QueryRow(context.Background(), "SELECT setting::int FROM pg_settings WHERE name = 'max_connections'").Scan(&maxConnections); err != nil {
+		logger.Error().Err(err).Msg("Failed to query max_connections")
+		return
+	}
+	if maxConnections <= 0 {
+		return
+	}
+
+	connectionLimit := maxConnections * lib.DBConfig.PostgreSQL.ConnectionLimitPercent / 100
+	checkThreshold(connectionCount, connectionLimit, "Connection", logger)
 }
 
 func ToDuration(i pgtype.Interval) time.Duration {
@@ -93,7 +110,7 @@ func ToDuration(i pgtype.Interval) time.Duration {
 
 func checkLongRunningQueries(activeActivities []activityInfo, logger zerolog.Logger) {
 	if !lib.DBConfig.PostgreSQL.Alarm.Enabled ||
-		!lib.DBConfig.PostgreSQL.Alarm.LongQuery.Enabled {
+		!lib.DBConfig.PostgreSQL.LongQuery.Enabled {
 		return
 	}
 
@@ -104,13 +121,13 @@ func checkLongRunningQueries(activeActivities []activityInfo, logger zerolog.Log
 		if activity.Duration == nil {
 			continue
 		}
-		if activity.Duration.Seconds() > float64(lib.DBConfig.PostgreSQL.Alarm.LongQuery.DurationSeconds) {
+		if activity.Duration.Seconds() > float64(lib.DBConfig.PostgreSQL.LongQuery.Duration) {
 			longRunningActivities = append(longRunningActivities, activity)
 		}
 	}
 
 	if len(longRunningActivities) > 0 {
-		alarmMessage := fmt.Sprintf("[%s] - %s - PostgreSQL has %d query(ies) running longer than %d seconds", pluginName, lib.GlobalConfig.Hostname, len(longRunningActivities), lib.DBConfig.PostgreSQL.Alarm.LongQuery.DurationSeconds)
+		alarmMessage := fmt.Sprintf("[%s] - %s - PostgreSQL has %d query(ies) running longer than %d seconds", pluginName, lib.GlobalConfig.Hostname, len(longRunningActivities), lib.DBConfig.PostgreSQL.LongQuery.Duration)
 
 		if lib.GlobalConfig.ZulipAlarm.Enabled {
 			lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, down)

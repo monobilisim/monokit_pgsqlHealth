@@ -55,31 +55,29 @@ mariadb:
     enabled: true
 
 postgresql:
-  connection-string: "postgres://postgres:123@localhost"
-  activity-limit: 30
-  connection-limit: 100
-  alarm:
+  process-limit: 50 # Process alarm threshold
+  active-query-limit: 30 # Active queries at the same time
+  connection-limit-percent: 70 # 70% of max_connections
+  credentials:
+    mode: "manual" # "manual" for host, port, user, password, dbname or "string" from connection-string
+    connection-string: "postgres://postgres:1234@localhost:5432" # if mode is "string", this will be used to connect to the database
+    # If mode is "manual", the following parameters will be used to connect to the database
+    host: "localhost"
+    port: 5432
+    user: "postgres"
+    password: "1234"
+    dbname: "postgres"
+  long-query:
     enabled: true
-    long-query:
-      enabled: true
-      duration-seconds: 60
+    duration: 60 # In seconds
   pmm-agent:
     enabled: false
-
-mongodb:
-  connection-string: "mongodb://127.0.0.1:27017/admin"
-  connect-timeout-seconds: 5
-  limits:
-    connections-percent: 80
-    cache-percent: 95
-  replicaset:
-    enabled: false
-    min-secondaries: 1
-    lag-warn-seconds: 30
-    lag-critical-seconds: 120
-    oplog-window-warn-hours: 24
-    oplog-window-critical-hours: 6
-    primary-election-grace-seconds: 30
   alarm:
     enabled: true
-  pmm-agent: false
+  # Not implemented yet, can be added in the future versions
+  cluster:
+    enabled: false
+    cluster-type: "patroni" # pgpool, patroni
+    size: 3
+    receive-queue-limit: 10
+    flow-control-limit: 0.20
