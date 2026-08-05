@@ -1,0 +1,85 @@
+mysql:
+  # Process alarm threshold
+  process-limit: 50
+  # If credentals are not provided nor working, defaults to mysqld.sock and root user with no password
+  credentials:
+    user: "root"
+    password: "password"
+    host: "localhost"
+    port: 3306
+    dbname: "mysql"
+    network: "tcp"
+    socket: "/var/run/mysqld/mysqld.sock"
+    allow-native-passwords: true
+  auto-repair: # If enabled, monokit will run "mysqlcheck --auto-repair --all-databases" based on the weekly schedule.
+    enabled: true
+    day: "Sun" # Mon Tue Wed Thu Fri Sat Sun
+    hour: "05:00" # 24h format, e.g. 05:00, 17:00
+  pmm-agent:
+    enabled: false
+  alarm:
+    enabled: true
+  # Not implemented yet, can be added in the future versions
+  cluster:
+    enabled: false
+    cluster_type: "" # ndb, xtradb
+    size: 3
+    receive-queue-limit: 10
+    flow-control-limit: 0.20
+
+mariadb:
+  enabled: true
+  process-limit: 50
+  credentials:
+    user: "root"
+    password: "password"
+    host: "localhost"
+    port: 3306
+    dbname: "mysql"
+    network: "tcp"
+    socket: "/var/run/mysqld/mysqld.sock"
+    allow-native-passwords: true
+  cluster:
+    enabled: false
+    cluster-type: "galera" # galera
+    size: 3
+    receive-queue-limit: 10
+    flow-control-limit: 0.20
+  auto-repair: # If enabled, monokit will run "mariadb-check --auto-repair --all-databases" based on the weekly schedule.
+    enabled: true
+    day: "Sun" # Mon Tue Wed Thu Fri Sat Sun
+    hour: "05:00" # 24h format, e.g. 05:00, 17:00
+  pmm-agent:
+    enabled: false
+  alarm:
+    enabled: true
+
+postgresql:
+  connection-string: "postgres://postgres:123@localhost"
+  activity-limit: 30
+  connection-limit: 100
+  alarm:
+    enabled: true
+    long-query:
+      enabled: true
+      duration-seconds: 60
+  pmm-agent:
+    enabled: false
+
+mongodb:
+  connection-string: "mongodb://127.0.0.1:27017/admin"
+  connect-timeout-seconds: 5
+  limits:
+    connections-percent: 80
+    cache-percent: 95
+  replicaset:
+    enabled: false
+    min-secondaries: 1
+    lag-warn-seconds: 30
+    lag-critical-seconds: 120
+    oplog-window-warn-hours: 24
+    oplog-window-critical-hours: 6
+    primary-election-grace-seconds: 30
+  alarm:
+    enabled: true
+  pmm-agent: false
