@@ -2,18 +2,12 @@ package main
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog"
 )
 
 const uptimeQuery = "SELECT pg_postmaster_start_time(), now() - pg_postmaster_start_time()"
-
-type UptimeInfo struct {
-	StartTime time.Time
-	Uptime    time.Duration
-}
 
 func LogUptime(logger zerolog.Logger) {
 	uptime, err := GetUptime(logger)

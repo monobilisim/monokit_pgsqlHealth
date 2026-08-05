@@ -12,7 +12,7 @@ import (
 
 // writeWalGStub puts a fake wal-g executable at the front of PATH. The stub
 // prints the given wal-verify statuses and backup list, which is enough for
-// CheckWalG since it only reads wal-g's stdout.
+// the WAL-G checks since they only read wal-g's stdout.
 func writeWalGStub(t *testing.T, integrity string, timeline string, backupTime time.Time) {
 	t.Helper()
 
@@ -49,7 +49,8 @@ func TestCheckWalG(t *testing.T) {
 	// Failing verify plus a backup that is three days old.
 	writeWalGStub(t, "FAILURE", "OK", time.Now().Add(-72*time.Hour))
 
-	CheckWalG(lib.Logger)
+	CheckWalGVerify(lib.Logger)
+	CheckWalGBackupAge(lib.Logger)
 
 	alarm, err := lib.GetLastZulipAlarm(pluginName, "walgIntegrity")
 	if err != nil {
@@ -84,7 +85,8 @@ func TestCheckWalG(t *testing.T) {
 	// Everything healthy: verify passes and the backup is fresh.
 	writeWalGStub(t, "OK", "OK", time.Now().Add(-1*time.Hour))
 
-	CheckWalG(lib.Logger)
+	CheckWalGVerify(lib.Logger)
+	CheckWalGBackupAge(lib.Logger)
 
 	alarm, err = lib.GetLastZulipAlarm(pluginName, "walgIntegrity")
 	if err != nil {

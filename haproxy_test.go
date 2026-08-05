@@ -101,7 +101,9 @@ backend nowhere
 	lib.DBConfig.PostgreSQL.HAProxy.Enabled = true
 	lib.DBConfig.PostgreSQL.HAProxy.ConfigPath = "/etc/haproxy/haproxy.cfg"
 
-	CheckHAProxy(lib.Logger)
+	CheckHAProxyService(lib.Logger)
+	CheckHAProxyConfig(lib.Logger)
+	CheckHAProxyPorts(lib.Logger)
 
 	// The bind port is open, so the ports module must not be down.
 	alarm, err := lib.GetLastZulipAlarm(pluginName, "haproxyPorts")
@@ -114,7 +116,7 @@ backend nowhere
 		t.Fatalf("failed to stop haproxy: %v\n%s", err, out)
 	}
 
-	CheckHAProxy(lib.Logger)
+	CheckHAProxyService(lib.Logger)
 
 	alarm, err = lib.GetLastZulipAlarm(pluginName, "haproxyService")
 	if err != nil {
@@ -129,7 +131,7 @@ backend nowhere
 		t.Fatalf("failed to restart haproxy: %v\n%s", err, out)
 	}
 
-	CheckHAProxy(lib.Logger)
+	CheckHAProxyService(lib.Logger)
 
 	alarm, err = lib.GetLastZulipAlarm(pluginName, "haproxyService")
 	if err != nil {

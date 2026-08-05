@@ -19,33 +19,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func CheckConsul(logger zerolog.Logger) {
-	config := lib.DBConfig.PostgreSQL.Consul
-
-	if !config.Enabled {
-		logger.Debug().Msg("Consul check is disabled in configuration, skipping.")
-		return
-	}
-
-	consulURL := config.Url
-	if consulURL == "" {
-		consulURL = "http://localhost:8500"
-	}
-	dnsPort := config.DnsPort
-	if dnsPort == 0 {
-		dnsPort = 8600
-	}
-
-	checkConsulService(logger)
-	checkConsulPorts(consulURL, dnsPort, logger)
-	checkConsulCatalog(consulURL, logger)
-	checkConsulMembers(consulURL, logger)
-}
-
-// checkConsulService alarms when the consul systemd service is missing or
+// CheckConsulService alarms when the consul systemd service is missing or
 // not running.
-func checkConsulService(logger zerolog.Logger) {
-	moduleName := "consulService"
+func CheckConsulService(logger zerolog.Logger) {
+	var moduleName string = "consulService"
 
 	unitsOut, _ := exec.Command("systemctl", "list-unit-files", "consul.service", "--no-legend", "--no-pager").Output()
 	installed := strings.TrimSpace(string(unitsOut)) != ""
@@ -77,9 +54,11 @@ func checkConsulService(logger zerolog.Logger) {
 	}
 }
 
-// checkConsulPorts dials the HTTP API port from the configured URL and the
+// CheckConsulPorts dials the HTTP API port from the configured URL and the
 // DNS port on the same host.
-func checkConsulPorts(consulURL string, dnsPort int, logger zerolog.Logger) {
+func CheckConsulPorts(logger zerolog.Logger) {
+	consulURL, dnsPort := consulSettings()
+
 	parsed, err := url.Parse(consulURL)
 	if err != nil {
 		logger.Error().Err(err).Str("url", consulURL).Msg("Invalid consul URL")
@@ -130,11 +109,13 @@ func checkConsulPorts(consulURL string, dnsPort int, logger zerolog.Logger) {
 	}
 }
 
-// checkConsulCatalog fetches the service catalog and alarms when services
+// CheckConsulCatalog fetches the service catalog and alarms when services
 // other than consul/postgres/patroni are registered (a Patroni DCS should
 // stay clean).
-func checkConsulCatalog(consulURL string, logger zerolog.Logger) {
-	moduleName := "consulCatalog"
+func CheckConsulCatalog(logger zerolog.Logger) {
+	var moduleName string = "consulCatalog"
+
+	consulURL, _ := consulSettings()
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	response, err := client.Get(consulURL + "/v1/catalog/services")
@@ -187,10 +168,12 @@ func checkConsulCatalog(consulURL string, logger zerolog.Logger) {
 	}
 }
 
-// checkConsulMembers verifies that every agent member's node health checks
-// report passing.
-func checkConsulMembers(consulURL string, logger zerolog.Logger) {
-	moduleName := "consulMembers"
+// CheckConsulMembers verifies that the agent member list is readable and that
+// every member's node health checks report passing.
+func CheckConsulMembers(logger zerolog.Logger) {
+	var moduleName string = "consulMembers"
+
+	consulURL, _ := consulSettings()
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	response, err := client.Get(consulURL + "/v1/agent/members")
@@ -275,6 +258,22 @@ func checkConsulMembers(consulURL string, logger zerolog.Logger) {
 			lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 		}
 	}
+}
+
+// consulSettings returns the configured consul URL and DNS port, falling back
+// to the defaults.
+func consulSettings() (string, int) {
+	consulURL := lib.DBConfig.PostgreSQL.Consul.Url
+	if consulURL == "" {
+		consulURL = "http://localhost:8500"
+	}
+
+	dnsPort := lib.DBConfig.PostgreSQL.Consul.DnsPort
+	if dnsPort == 0 {
+		dnsPort = 8600
+	}
+
+	return consulURL, dnsPort
 }
 
 // consulNodeHealth returns the first health check status of a node, or

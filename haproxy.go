@@ -18,23 +18,9 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func CheckHAProxy(logger zerolog.Logger) {
-	var moduleName string
-
-	config := lib.DBConfig.PostgreSQL.HAProxy
-
-	if !config.Enabled {
-		logger.Debug().Msg("HAProxy check is disabled in configuration, skipping.")
-		return
-	}
-
-	configPath := config.ConfigPath
-	if configPath == "" {
-		configPath = "/etc/haproxy/haproxy.cfg"
-	}
-
-	// haproxy.service must exist and be active
-	moduleName = "haproxyService"
+// CheckHAProxyService alarms when haproxy.service is missing or not active.
+func CheckHAProxyService(logger zerolog.Logger) {
+	var moduleName string = "haproxyService"
 
 	unitsOut, _ := exec.Command("systemctl", "list-unit-files", "haproxy.service", "--no-legend", "--no-pager").Output()
 	installed := strings.TrimSpace(string(unitsOut)) != ""
@@ -64,20 +50,24 @@ func CheckHAProxy(logger zerolog.Logger) {
 		alarmMessage := fmt.Sprintf("[%s] - %s - HAProxy service is running again", pluginName, lib.GlobalConfig.Hostname)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 	}
+}
 
-	// The bind ports must be parseable from haproxy.cfg
-	moduleName = "haproxyConfig"
-	ports, err := parseHAProxyBindPorts(configPath)
+// CheckHAProxyConfig alarms when the bind ports cannot be parsed out of
+// haproxy.cfg.
+func CheckHAProxyConfig(logger zerolog.Logger) {
+	var moduleName string = "haproxyConfig"
+
+	_, err := parseHAProxyBindPorts(haproxyConfigPath())
 
 	if err != nil {
-		logger.Error().Err(err).Str("path", configPath).Msg("Failed to parse HAProxy bind ports")
+		logger.Error().Err(err).Str("path", haproxyConfigPath()).Msg("Failed to parse HAProxy bind ports")
 
 		alarmMessage := fmt.Sprintf("[%s] - %s - HAProxy bind ports could not be read: %v", pluginName, lib.GlobalConfig.Hostname, err)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, down)
 		return
 	}
 
-	lastAlarm, err = lib.GetLastZulipAlarm(pluginName, moduleName)
+	lastAlarm, err := lib.GetLastZulipAlarm(pluginName, moduleName)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to get last alarm from database")
 		return
@@ -87,10 +77,19 @@ func CheckHAProxy(logger zerolog.Logger) {
 		alarmMessage := fmt.Sprintf("[%s] - %s - HAProxy config is readable again", pluginName, lib.GlobalConfig.Hostname)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 	}
+}
 
-	// Every bind port must accept TCP connections; alarm once listing the
-	// ports that do not.
-	moduleName = "haproxyPorts"
+// CheckHAProxyPorts verifies that every bind port in haproxy.cfg accepts TCP
+// connections, alarming once listing the ports that do not.
+func CheckHAProxyPorts(logger zerolog.Logger) {
+	var moduleName string = "haproxyPorts"
+
+	ports, err := parseHAProxyBindPorts(haproxyConfigPath())
+	if err != nil {
+		// CheckHAProxyConfig alarms on an unreadable config.
+		logger.Debug().Err(err).Msg("HAProxy config is not readable, skipping the port check")
+		return
+	}
 
 	closedPorts := []string{}
 	for _, port := range ports {
@@ -122,6 +121,16 @@ func CheckHAProxy(logger zerolog.Logger) {
 			lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 		}
 	}
+}
+
+// haproxyConfigPath returns the configured haproxy.cfg path or its default
+// location.
+func haproxyConfigPath() string {
+	configPath := lib.DBConfig.PostgreSQL.HAProxy.ConfigPath
+	if configPath == "" {
+		configPath = "/etc/haproxy/haproxy.cfg"
+	}
+	return configPath
 }
 
 // parseHAProxyBindPorts extracts the port of every `bind` line in the given

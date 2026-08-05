@@ -23,38 +23,15 @@ import (
 // backupMaxAge is how old the newest basebackup may get before we alarm.
 const backupMaxAge = 48 * time.Hour
 
-type walgBackup struct {
-	BackupName string    `json:"backup_name"`
-	Time       time.Time `json:"time"`
-}
-
-func CheckWalG(logger zerolog.Logger) {
-	var moduleName string
-	var issueSubject string
-
-	config := lib.DBConfig.PostgreSQL.WalG
-
-	if !config.Enabled {
-		logger.Debug().Msg("WAL-G check is disabled in configuration, skipping.")
-		return
-	}
-
-	// The verify runs once a day at the configured HH:MM. An empty
-	// verify-hour means "run on every invocation". Test mode always runs.
-	if config.VerifyHour != "" && !lib.IsTestMode() && time.Now().Format("15:04") != config.VerifyHour {
-		logger.Debug().Str("verify-hour", config.VerifyHour).Msg("Not the configured WAL-G verify time, skipping.")
-		return
-	}
-
-	if _, err := exec.LookPath("wal-g"); err != nil {
-		logger.Warn().Msg("wal-g binary not found in PATH, skipping WAL-G check.")
-		return
-	}
+// CheckWalGVerify runs `wal-g wal-verify integrity timeline`, alarms when it
+// cannot run at all, and checks the integrity and timeline results each under
+// its own module with a Zulip alarm and a Redmine issue.
+func CheckWalGVerify(logger zerolog.Logger) {
+	var moduleName string = "walgVerify"
 
 	logger.Info().Msg("Running WAL-G verification...")
 
-	moduleName = "walgVerify"
-	verifyOutput, err := runWalG(config.RunAsUser, "wal-verify", "integrity", "timeline")
+	verifyOutput, err := runWalG(lib.DBConfig.PostgreSQL.WalG.RunAsUser, "wal-verify", "integrity", "timeline")
 
 	// wal-verify itself failed to run
 	if err != nil {
@@ -89,7 +66,7 @@ func CheckWalG(logger zerolog.Logger) {
 
 	for _, check := range checks {
 		moduleName = check.Module
-		issueSubject = fmt.Sprintf("%s için WAL-G %s kontrolü başarısız", lib.GlobalConfig.Hostname, check.Type)
+		issueSubject := fmt.Sprintf("%s için WAL-G %s kontrolü başarısız", lib.GlobalConfig.Hostname, check.Type)
 
 		logger.Info().Str("check", check.Type).Str("status", check.Status).Msg("WAL-G check result")
 
@@ -170,49 +147,14 @@ func CheckWalG(logger zerolog.Logger) {
 			}
 		}
 	}
-
-	checkLastBackupAge(config.RunAsUser, logger)
 }
 
-// runWalG executes wal-g with the given arguments. When the plugin runs as
-// root and run-as-user is set, the command is wrapped with `su` so wal-g sees
-// the database user's environment and peer authentication.
-func runWalG(runAsUser string, args ...string) (string, error) {
-	var cmd *exec.Cmd
-
-	if runAsUser != "" && os.Geteuid() == 0 {
-		cmd = exec.Command("su", "-s", "/bin/sh", runAsUser, "-c", "wal-g "+strings.Join(args, " "))
-	} else {
-		cmd = exec.Command("wal-g", args...)
-	}
-
-	out, err := cmd.Output()
-	return string(out), err
-}
-
-// parseWalVerifyStatus extracts e.g. "OK" from a line like
-// "integrity check status: OK" in the wal-verify output.
-func parseWalVerifyStatus(output string, checkType string) string {
-	for _, line := range strings.Split(output, "\n") {
-		if !strings.Contains(line, checkType+" check status:") {
-			continue
-		}
-
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			return strings.TrimSpace(parts[1])
-		}
-	}
-
-	return "unknown"
-}
-
-// checkLastBackupAge alarms when the newest wal-g basebackup is older than
+// CheckWalGBackupAge alarms when the newest wal-g basebackup is older than
 // backupMaxAge, or when no backup exists at all.
-func checkLastBackupAge(runAsUser string, logger zerolog.Logger) {
-	moduleName := "walgBackupAge"
+func CheckWalGBackupAge(logger zerolog.Logger) {
+	var moduleName string = "walgBackupAge"
 
-	output, err := runWalG(runAsUser, "backup-list", "--json")
+	output, err := runWalG(lib.DBConfig.PostgreSQL.WalG.RunAsUser, "backup-list", "--json")
 	if err != nil {
 		logger.Error().Err(err).Msg("wal-g backup-list failed to run")
 
@@ -265,4 +207,54 @@ func checkLastBackupAge(runAsUser string, logger zerolog.Logger) {
 			lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 		}
 	}
+}
+
+// walgDue reports whether the daily WAL-G verify should run in this
+// invocation. The verify runs once a day at the configured HH:MM; an empty
+// verify-hour means "run on every invocation". Test mode always runs.
+func walgDue() bool {
+	verifyHour := lib.DBConfig.PostgreSQL.WalG.VerifyHour
+	if verifyHour == "" || lib.IsTestMode() {
+		return true
+	}
+	return time.Now().Format("15:04") == verifyHour
+}
+
+// hasWalG checks if the wal-g binary is available.
+func hasWalG() bool {
+	_, err := exec.LookPath("wal-g")
+	return err == nil
+}
+
+// runWalG executes wal-g with the given arguments. When the plugin runs as
+// root and run-as-user is set, the command is wrapped with `su` so wal-g sees
+// the database user's environment and peer authentication.
+func runWalG(runAsUser string, args ...string) (string, error) {
+	var cmd *exec.Cmd
+
+	if runAsUser != "" && os.Geteuid() == 0 {
+		cmd = exec.Command("su", "-s", "/bin/sh", runAsUser, "-c", "wal-g "+strings.Join(args, " "))
+	} else {
+		cmd = exec.Command("wal-g", args...)
+	}
+
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// parseWalVerifyStatus extracts e.g. "OK" from a line like
+// "integrity check status: OK" in the wal-verify output.
+func parseWalVerifyStatus(output string, checkType string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, checkType+" check status:") {
+			continue
+		}
+
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[1])
+		}
+	}
+
+	return "unknown"
 }

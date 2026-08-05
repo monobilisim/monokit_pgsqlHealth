@@ -23,52 +23,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type patroniConfig struct {
-	Name    string `yaml:"name"`
-	Scope   string `yaml:"scope"`
-	RestAPI struct {
-		ConnectAddress string `yaml:"connect_address"`
-		CertFile       string `yaml:"certfile"`
-		KeyFile        string `yaml:"keyfile"`
-		CAFile         string `yaml:"cafile"`
-	} `yaml:"restapi"`
-}
+// CheckPatroniConfig alarms when the Patroni configuration file is not
+// readable. The config holds the REST API address every other Patroni check
+// depends on.
+func CheckPatroniConfig(logger zerolog.Logger) {
+	var moduleName string = "patroniConfig"
 
-type patroniMember struct {
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	State    string `json:"state"`
-	Host     string `json:"host"`
-	Port     int64  `json:"port"`
-	Timeline int64  `json:"timeline"`
-}
-
-type patroniClusterResponse struct {
-	Members []patroniMember `json:"members"`
-	Scope   string          `json:"scope"`
-}
-
-func CheckPatroni(logger zerolog.Logger) {
-	var moduleName string
-
-	config := lib.DBConfig.PostgreSQL.Patroni
-
-	if !config.Enabled {
-		logger.Debug().Msg("Patroni check is disabled in configuration, skipping.")
-		return
-	}
-
-	configPath := config.ConfigPath
-	if configPath == "" {
-		configPath = "/etc/patroni/patroni.yml"
-	}
-
-	// Patroni config must be readable, it holds the REST API address.
-	moduleName = "patroniConfig"
-	patroni, err := loadPatroniConfig(configPath)
+	_, err := loadPatroniConfig(patroniConfigPath())
 
 	if err != nil {
-		logger.Error().Err(err).Str("path", configPath).Msg("Failed to read Patroni configuration")
+		logger.Error().Err(err).Str("path", patroniConfigPath()).Msg("Failed to read Patroni configuration")
 
 		alarmMessage := fmt.Sprintf("[%s] - %s - Patroni config could not be read: %v", pluginName, lib.GlobalConfig.Hostname, err)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, down)
@@ -85,9 +49,12 @@ func CheckPatroni(logger zerolog.Logger) {
 		alarmMessage := fmt.Sprintf("[%s] - %s - Patroni config is readable again", pluginName, lib.GlobalConfig.Hostname)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 	}
+}
 
-	// patroni.service must be active
-	moduleName = "patroniService"
+// CheckPatroniService alarms when patroni.service is not active.
+func CheckPatroniService(logger zerolog.Logger) {
+	var moduleName string = "patroniService"
+
 	serviceOut, _ := exec.Command("systemctl", "is-active", "patroni.service").Output()
 	serviceActive := strings.TrimSpace(string(serviceOut)) == "active"
 
@@ -108,10 +75,20 @@ func CheckPatroni(logger zerolog.Logger) {
 			lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 		}
 	}
+}
 
-	// The REST API must answer /cluster
-	moduleName = "patroniApi"
-	cluster, err := fetchPatroniCluster(patroni, logger)
+// CheckPatroniAPI alarms when the Patroni REST API does not answer /cluster.
+func CheckPatroniAPI(logger zerolog.Logger) {
+	var moduleName string = "patroniApi"
+
+	patroni, err := loadPatroniConfig(patroniConfigPath())
+	if err != nil {
+		// CheckPatroniConfig alarms on an unreadable config.
+		logger.Debug().Err(err).Msg("Patroni config is not readable, skipping the API check")
+		return
+	}
+
+	_, err = fetchPatroniCluster(patroni, logger)
 
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to fetch Patroni cluster state")
@@ -121,7 +98,7 @@ func CheckPatroni(logger zerolog.Logger) {
 		return
 	}
 
-	lastAlarm, err = lib.GetLastZulipAlarm(pluginName, moduleName)
+	lastAlarm, err := lib.GetLastZulipAlarm(pluginName, moduleName)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to get last alarm from database")
 		return
@@ -131,130 +108,27 @@ func CheckPatroni(logger zerolog.Logger) {
 		alarmMessage := fmt.Sprintf("[%s] - %s - Patroni REST API is reachable again", pluginName, lib.GlobalConfig.Hostname)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 	}
-
-	previousMembers := loadPreviousPatroniMembers(logger)
-
-	checkPatroniRoleChanges(patroni, cluster.Members, previousMembers, logger)
-	runningCount := checkPatroniMemberStates(cluster.Members, logger)
-	checkPatroniClusterSize(cluster, runningCount, previousMembers, logger)
-
-	savePatroniMembers(cluster, logger)
 }
 
-func loadPatroniConfig(path string) (*patroniConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
+// CheckPatroniRoleChanges alarms when a member's role differs from the state
+// saved by the previous run, and runs the leader-switch hook when this node
+// has become the leader.
+func CheckPatroniRoleChanges(logger zerolog.Logger) {
+	var moduleName string = "patroniRoleChange"
 
-	var config patroniConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-
-	if config.RestAPI.ConnectAddress == "" {
-		return nil, fmt.Errorf("patroni config has no restapi.connect_address")
-	}
-
-	return &config, nil
-}
-
-// fetchPatroniCluster GETs /cluster from the Patroni REST API, using HTTPS
-// with the certificates from the Patroni config when they are set up.
-func fetchPatroniCluster(patroni *patroniConfig, logger zerolog.Logger) (*patroniClusterResponse, error) {
-	scheme := "http"
-	transport := &http.Transport{}
-
-	if patroni.RestAPI.CertFile != "" {
-		scheme = "https"
-		tlsConfig := &tls.Config{}
-
-		cert, err := tls.LoadX509KeyPair(patroni.RestAPI.CertFile, patroni.RestAPI.KeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load patroni client certificate: %w", err)
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-
-		if patroni.RestAPI.CAFile != "" {
-			caData, err := os.ReadFile(patroni.RestAPI.CAFile)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read patroni CA file: %w", err)
-			}
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caData)
-			tlsConfig.RootCAs = pool
-		}
-
-		transport.TLSClientConfig = tlsConfig
-	}
-
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	clusterURL := scheme + "://" + strings.TrimSuffix(patroni.RestAPI.ConnectAddress, "/") + "/cluster"
-
-	response, err := client.Get(clusterURL)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode >= 400 {
-		return nil, fmt.Errorf("patroni API returned HTTP %d", response.StatusCode)
-	}
-
-	var cluster patroniClusterResponse
-	if err := json.NewDecoder(response.Body).Decode(&cluster); err != nil {
-		return nil, fmt.Errorf("failed to decode patroni cluster response: %w", err)
-	}
-
-	logger.Debug().Interface("cluster", cluster).Msg("Patroni cluster state")
-	return &cluster, nil
-}
-
-// loadPreviousPatroniMembers returns the cluster state saved by the previous
-// run, used for role-change and cluster-size comparisons.
-func loadPreviousPatroniMembers(logger zerolog.Logger) []lib.PatroniClusterMember {
-	var members []lib.PatroniClusterMember
-	if err := lib.DB.Find(&members).Error; err != nil {
-		logger.Error().Err(err).Msg("Failed to load previous Patroni cluster state")
-		return nil
-	}
-	return members
-}
-
-// savePatroniMembers replaces the persisted cluster state with the current one.
-func savePatroniMembers(cluster *patroniClusterResponse, logger zerolog.Logger) {
-	if err := lib.DB.Where("1 = 1").Delete(&lib.PatroniClusterMember{}).Error; err != nil {
-		logger.Error().Err(err).Msg("Failed to clear previous Patroni cluster state")
+	patroni, cluster := getPatroniCluster(logger)
+	if cluster == nil {
 		return
 	}
 
-	for _, member := range cluster.Members {
-		record := lib.PatroniClusterMember{
-			Scope:    cluster.Scope,
-			Name:     member.Name,
-			Role:     member.Role,
-			State:    member.State,
-			Host:     member.Host,
-			Port:     member.Port,
-			Timeline: member.Timeline,
-		}
-		if err := lib.DB.Create(&record).Error; err != nil {
-			logger.Error().Err(err).Str("member", member.Name).Msg("Failed to save Patroni cluster member")
-		}
-	}
-}
-
-// checkPatroniRoleChanges alarms when a member's role differs from the last
-// run and runs the leader-switch hook when this node has become the leader.
-func checkPatroniRoleChanges(patroni *patroniConfig, members []patroniMember, previous []lib.PatroniClusterMember, logger zerolog.Logger) {
-	moduleName := "patroniRoleChange"
+	previous := loadPreviousPatroniMembers(logger)
 
 	previousRoles := make(map[string]string, len(previous))
 	for _, member := range previous {
 		previousRoles[member.Name] = member.Role
 	}
 
-	for _, member := range members {
+	for _, member := range cluster.Members {
 		oldRole, known := previousRoles[member.Name]
 		if !known || oldRole == member.Role {
 			continue
@@ -267,49 +141,50 @@ func checkPatroniRoleChanges(patroni *patroniConfig, members []patroniMember, pr
 		logger.Info().Msg(alarmMessage)
 		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 
-		becameLeader := member.Role == "leader" || member.Role == "master"
-		if becameLeader && member.Name == patroni.Name {
-			runLeaderSwitchHook(logger)
+		isLeaderRole := member.Role == "leader" || member.Role == "master"
+		if !isLeaderRole || member.Name != patroni.Name {
+			continue
+		}
+
+		// This node was promoted to leader: run the configured shell command
+		// and report success or failure under its own module.
+		hookModule := "patroniLeaderHook"
+
+		hook := lib.DBConfig.PostgreSQL.Patroni.LeaderSwitchHook
+		if hook == "" {
+			continue
+		}
+
+		logger.Info().Str("hook", hook).Msg("This node became the Patroni leader, running leader-switch hook")
+
+		err := exec.Command("sh", "-c", hook).Run()
+
+		if err != nil {
+			alarmMessage := fmt.Sprintf("[%s] - %s - Patroni leader-switch hook failed: %v", pluginName, lib.GlobalConfig.Hostname, err)
+			lib.SendZulipAlarm(alarmMessage, pluginName, hookModule, down)
+		}
+
+		if err == nil {
+			alarmMessage := fmt.Sprintf("[%s] - %s - Patroni leader-switch hook ran successfully", pluginName, lib.GlobalConfig.Hostname)
+			lib.SendZulipAlarm(alarmMessage, pluginName, hookModule, up)
 		}
 	}
 }
 
-// runLeaderSwitchHook executes the configured shell command after this node
-// was promoted to leader, and reports success or failure.
-func runLeaderSwitchHook(logger zerolog.Logger) {
-	moduleName := "patroniLeaderHook"
+// CheckPatroniMemberStates alarms once, listing every member that is not
+// running/streaming.
+func CheckPatroniMemberStates(logger zerolog.Logger) {
+	var moduleName string = "patroniNodeStates"
 
-	hook := lib.DBConfig.PostgreSQL.Patroni.LeaderSwitchHook
-	if hook == "" {
+	_, cluster := getPatroniCluster(logger)
+	if cluster == nil {
 		return
 	}
 
-	logger.Info().Str("hook", hook).Msg("This node became the Patroni leader, running leader-switch hook")
-
-	err := exec.Command("sh", "-c", hook).Run()
-
-	if err != nil {
-		alarmMessage := fmt.Sprintf("[%s] - %s - Patroni leader-switch hook failed: %v", pluginName, lib.GlobalConfig.Hostname, err)
-		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, down)
-	}
-
-	if err == nil {
-		alarmMessage := fmt.Sprintf("[%s] - %s - Patroni leader-switch hook ran successfully", pluginName, lib.GlobalConfig.Hostname)
-		lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
-	}
-}
-
-// checkPatroniMemberStates alarms once, listing every member that is not
-// running/streaming, and returns how many members are healthy.
-func checkPatroniMemberStates(members []patroniMember, logger zerolog.Logger) int {
-	moduleName := "patroniNodeStates"
-
-	runningCount := 0
 	unhealthyMembers := []patroniMember{}
 
-	for _, member := range members {
+	for _, member := range cluster.Members {
 		if member.State == "running" || member.State == "streaming" {
-			runningCount++
 			continue
 		}
 
@@ -337,7 +212,7 @@ func checkPatroniMemberStates(members []patroniMember, logger zerolog.Logger) in
 		lastAlarm, err := lib.GetLastZulipAlarm(pluginName, moduleName)
 		if err != nil {
 			logger.Error().Err(err).Msg("Failed to get last alarm from database")
-			return runningCount
+			return
 		}
 
 		if lastAlarm.Status == down {
@@ -345,23 +220,34 @@ func checkPatroniMemberStates(members []patroniMember, logger zerolog.Logger) in
 			lib.SendZulipAlarm(alarmMessage, pluginName, moduleName, up)
 		}
 	}
-
-	return runningCount
 }
 
-// checkPatroniClusterSize keeps a Redmine issue open while one or zero
+// CheckPatroniClusterSize keeps a Redmine issue open while one or zero
 // members are running, embedding a markdown table of the current members.
-func checkPatroniClusterSize(cluster *patroniClusterResponse, runningCount int, previous []lib.PatroniClusterMember, logger zerolog.Logger) {
-	moduleName := "patroniClusterSize"
+func CheckPatroniClusterSize(logger zerolog.Logger) {
+	var moduleName string = "patroniClusterSize"
 	issueSubject := fmt.Sprintf("%s için Patroni cluster boyutu düştü", lib.GlobalConfig.Hostname)
+
+	_, cluster := getPatroniCluster(logger)
+	if cluster == nil {
+		return
+	}
 
 	total := len(cluster.Members)
 	if total == 0 {
 		return
 	}
 
+	runningCount := 0
+	for _, member := range cluster.Members {
+		if member.State == "running" || member.State == "streaming" {
+			runningCount++
+		}
+	}
+
 	// A previous run may have seen more members than the API reports now
 	// (e.g. a node dropped out of the cluster entirely).
+	previous := loadPreviousPatroniMembers(logger)
 	expectedTotal := total
 	if len(previous) > expectedTotal {
 		expectedTotal = len(previous)
@@ -458,4 +344,143 @@ func checkPatroniClusterSize(cluster *patroniClusterResponse, runningCount int, 
 			lib.CreateRedmineIssue(issue)
 		}
 	}
+}
+
+// SavePatroniMembers replaces the persisted cluster state with the current
+// one. Runs after the role-change and cluster-size checks, since both compare
+// against the previously saved state.
+func SavePatroniMembers(logger zerolog.Logger) {
+	_, cluster := getPatroniCluster(logger)
+	if cluster == nil {
+		return
+	}
+
+	if err := lib.DB.Where("1 = 1").Delete(&lib.PatroniClusterMember{}).Error; err != nil {
+		logger.Error().Err(err).Msg("Failed to clear previous Patroni cluster state")
+		return
+	}
+
+	for _, member := range cluster.Members {
+		record := lib.PatroniClusterMember{
+			Scope:    cluster.Scope,
+			Name:     member.Name,
+			Role:     member.Role,
+			State:    member.State,
+			Host:     member.Host,
+			Port:     member.Port,
+			Timeline: member.Timeline,
+		}
+		if err := lib.DB.Create(&record).Error; err != nil {
+			logger.Error().Err(err).Str("member", member.Name).Msg("Failed to save Patroni cluster member")
+		}
+	}
+}
+
+// patroniConfigPath returns the configured Patroni config path or its
+// default location.
+func patroniConfigPath() string {
+	configPath := lib.DBConfig.PostgreSQL.Patroni.ConfigPath
+	if configPath == "" {
+		configPath = "/etc/patroni/patroni.yml"
+	}
+	return configPath
+}
+
+func loadPatroniConfig(path string) (*patroniConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var config patroniConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	if config.RestAPI.ConnectAddress == "" {
+		return nil, fmt.Errorf("patroni config has no restapi.connect_address")
+	}
+
+	return &config, nil
+}
+
+// getPatroniCluster loads the Patroni config and fetches the current cluster
+// state. Errors are only logged here: CheckPatroniConfig and CheckPatroniAPI
+// own the alarms for an unreadable config and an unreachable API.
+func getPatroniCluster(logger zerolog.Logger) (*patroniConfig, *patroniClusterResponse) {
+	patroni, err := loadPatroniConfig(patroniConfigPath())
+	if err != nil {
+		logger.Debug().Err(err).Msg("Patroni config is not readable, skipping the cluster check")
+		return nil, nil
+	}
+
+	cluster, err := fetchPatroniCluster(patroni, logger)
+	if err != nil {
+		logger.Debug().Err(err).Msg("Patroni REST API is not reachable, skipping the cluster check")
+		return nil, nil
+	}
+
+	return patroni, cluster
+}
+
+// fetchPatroniCluster GETs /cluster from the Patroni REST API, using HTTPS
+// with the certificates from the Patroni config when they are set up.
+func fetchPatroniCluster(patroni *patroniConfig, logger zerolog.Logger) (*patroniClusterResponse, error) {
+	scheme := "http"
+	transport := &http.Transport{}
+
+	if patroni.RestAPI.CertFile != "" {
+		scheme = "https"
+		tlsConfig := &tls.Config{}
+
+		cert, err := tls.LoadX509KeyPair(patroni.RestAPI.CertFile, patroni.RestAPI.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load patroni client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+
+		if patroni.RestAPI.CAFile != "" {
+			caData, err := os.ReadFile(patroni.RestAPI.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read patroni CA file: %w", err)
+			}
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(caData)
+			tlsConfig.RootCAs = pool
+		}
+
+		transport.TLSClientConfig = tlsConfig
+	}
+
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	clusterURL := scheme + "://" + strings.TrimSuffix(patroni.RestAPI.ConnectAddress, "/") + "/cluster"
+
+	response, err := client.Get(clusterURL)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode >= 400 {
+		return nil, fmt.Errorf("patroni API returned HTTP %d", response.StatusCode)
+	}
+
+	var cluster patroniClusterResponse
+	if err := json.NewDecoder(response.Body).Decode(&cluster); err != nil {
+		return nil, fmt.Errorf("failed to decode patroni cluster response: %w", err)
+	}
+
+	logger.Debug().Interface("cluster", cluster).Msg("Patroni cluster state")
+	return &cluster, nil
+}
+
+// loadPreviousPatroniMembers returns the cluster state saved by the previous
+// run, used for role-change and cluster-size comparisons.
+func loadPreviousPatroniMembers(logger zerolog.Logger) []lib.PatroniClusterMember {
+	var members []lib.PatroniClusterMember
+	if err := lib.DB.Find(&members).Error; err != nil {
+		logger.Error().Err(err).Msg("Failed to load previous Patroni cluster state")
+		return nil
+	}
+	return members
 }

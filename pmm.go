@@ -14,11 +14,6 @@ const pmmServiceName = "pmm-agent"
 func CheckPMM(logger zerolog.Logger) {
 	moduleName := "pmm-agent"
 
-	if !lib.DBConfig.PostgreSQL.PMMAgent.Enabled {
-		logger.Info().Msg("PMM agent monitoring is disabled in configuration. Skipping PMM agent check.")
-		return
-	}
-
 	if _, err := exec.LookPath("pmm-agent"); err != nil {
 		logger.Debug().Msg("pmm-agent not found, skipping PMM agent check.")
 		return

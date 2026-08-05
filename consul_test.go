@@ -11,8 +11,8 @@ import (
 	lib "github.com/monobilisim/monokit_lib"
 )
 
-// startConsulStub serves the consul endpoints CheckConsul uses. The catalog
-// services and per-node health are swappable between runs.
+// startConsulStub serves the consul endpoints the consul checks use. The
+// catalog services and per-node health are swappable between runs.
 func startConsulStub(t *testing.T, services *string, nodeHealth *string) *httptest.Server {
 	t.Helper()
 
@@ -57,7 +57,10 @@ func TestCheckConsul(t *testing.T) {
 	lib.DBConfig.PostgreSQL.Consul.Url = server.URL
 	lib.DBConfig.PostgreSQL.Consul.DnsPort = dnsPort
 
-	CheckConsul(lib.Logger)
+	CheckConsulService(lib.Logger)
+	CheckConsulPorts(lib.Logger)
+	CheckConsulCatalog(lib.Logger)
+	CheckConsulMembers(lib.Logger)
 
 	// consul.service is not installed in the test container.
 	alarm, err := lib.GetLastZulipAlarm(pluginName, "consulService")
@@ -104,7 +107,8 @@ func TestCheckConsul(t *testing.T) {
 	services = `{"consul":[],"postgresql":[]}`
 	nodeHealth = `[{"Status":"passing"}]`
 
-	CheckConsul(lib.Logger)
+	CheckConsulCatalog(lib.Logger)
+	CheckConsulMembers(lib.Logger)
 
 	alarm, err = lib.GetLastZulipAlarm(pluginName, "consulCatalog")
 	if err != nil {
@@ -133,7 +137,7 @@ func TestCheckConsulClosedPorts(t *testing.T) {
 	lib.DBConfig.PostgreSQL.Consul.Url = "http://127.0.0.1:1" // nothing listens on port 1
 	lib.DBConfig.PostgreSQL.Consul.DnsPort = 1
 
-	CheckConsul(lib.Logger)
+	CheckConsulPorts(lib.Logger)
 
 	for _, moduleName := range []string{"consulPortHttp", "consulPortDns"} {
 		alarm, err := lib.GetLastZulipAlarm(pluginName, moduleName)

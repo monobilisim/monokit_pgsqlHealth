@@ -62,15 +62,45 @@ func main() {
 
 	LogUptime(logger)
 
-	CheckActivity(logger)
+	if lib.DBConfig.PostgreSQL.LongQuery.Enabled {
+		CheckLongRunningQueries(logger)
+	}
 
-	CheckWalG(logger)
+	CheckProcessCount(logger)
 
-	CheckPatroni(logger)
+	CheckActiveQueryCount(logger)
 
-	CheckConsul(logger)
+	CheckConnectionPercent(logger)
 
-	CheckHAProxy(logger)
+	if lib.DBConfig.PostgreSQL.WalG.Enabled && walgDue() && hasWalG() {
+		CheckWalGVerify(logger)
+		CheckWalGBackupAge(logger)
+	}
 
-	CheckPMM(logger)
+	if lib.DBConfig.PostgreSQL.Patroni.Enabled {
+		CheckPatroniConfig(logger)
+		CheckPatroniService(logger)
+		CheckPatroniAPI(logger)
+		CheckPatroniRoleChanges(logger)
+		CheckPatroniMemberStates(logger)
+		CheckPatroniClusterSize(logger)
+		SavePatroniMembers(logger)
+	}
+
+	if lib.DBConfig.PostgreSQL.Consul.Enabled {
+		CheckConsulService(logger)
+		CheckConsulPorts(logger)
+		CheckConsulCatalog(logger)
+		CheckConsulMembers(logger)
+	}
+
+	if lib.DBConfig.PostgreSQL.HAProxy.Enabled {
+		CheckHAProxyService(logger)
+		CheckHAProxyConfig(logger)
+		CheckHAProxyPorts(logger)
+	}
+
+	if lib.DBConfig.PostgreSQL.PMMAgent.Enabled {
+		CheckPMM(logger)
+	}
 }

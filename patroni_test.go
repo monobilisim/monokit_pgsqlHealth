@@ -83,7 +83,13 @@ func TestCheckPatroni(t *testing.T) {
 		{"name":"node2","role":"leader","state":"running","host":"10.0.0.2","port":5432,"timeline":2}
 	]}`
 
-	CheckPatroni(lib.Logger)
+	CheckPatroniConfig(lib.Logger)
+	CheckPatroniService(lib.Logger)
+	CheckPatroniAPI(lib.Logger)
+	CheckPatroniRoleChanges(lib.Logger)
+	CheckPatroniMemberStates(lib.Logger)
+	CheckPatroniClusterSize(lib.Logger)
+	SavePatroniMembers(lib.Logger)
 
 	// The leader-switch hook must have run, since node2 is this node.
 	if _, err := os.Stat(hookMarker); err != nil {
@@ -144,7 +150,13 @@ func TestCheckPatroni(t *testing.T) {
 		{"name":"node2","role":"leader","state":"running","host":"10.0.0.2","port":5432,"timeline":2}
 	]}`
 
-	CheckPatroni(lib.Logger)
+	CheckPatroniConfig(lib.Logger)
+	CheckPatroniService(lib.Logger)
+	CheckPatroniAPI(lib.Logger)
+	CheckPatroniRoleChanges(lib.Logger)
+	CheckPatroniMemberStates(lib.Logger)
+	CheckPatroniClusterSize(lib.Logger)
+	SavePatroniMembers(lib.Logger)
 
 	alarm, err = lib.GetLastZulipAlarm(pluginName, "patroniNodeStates")
 	if err != nil {
@@ -181,7 +193,7 @@ func TestCheckPatroniUnreachableAPI(t *testing.T) {
 	lib.DBConfig.PostgreSQL.Patroni.ConfigPath = writePatroniConfig(t, "127.0.0.1:1") // nothing listens on port 1
 	lib.DBConfig.PostgreSQL.Patroni.LeaderSwitchHook = ""
 
-	CheckPatroni(lib.Logger)
+	CheckPatroniAPI(lib.Logger)
 
 	alarm, err := lib.GetLastZulipAlarm(pluginName, "patroniApi")
 	if err != nil {

@@ -28,14 +28,15 @@ func TestCheckActivity(t *testing.T) {
 			connectCluster(t, cluster)
 
 			lib.DBConfig.PostgreSQL.Alarm.Enabled = true
-			lib.DBConfig.PostgreSQL.LongQuery.Enabled = false
 
 			// Impossible limits force every threshold below its count.
 			lib.DBConfig.PostgreSQL.ProcessLimit = 0
 			lib.DBConfig.PostgreSQL.ActiveQueryLimit = 0
 			lib.DBConfig.PostgreSQL.ConnectionLimitPercent = 0
 
-			CheckActivity(lib.Logger)
+			CheckProcessCount(lib.Logger)
+			CheckActiveQueryCount(lib.Logger)
+			CheckConnectionPercent(lib.Logger)
 
 			for _, moduleName := range []string{"Process", "ActiveQuery", "Connection"} {
 				alarm, err := lib.GetLastZulipAlarm(pluginName, moduleName)
@@ -52,7 +53,9 @@ func TestCheckActivity(t *testing.T) {
 			lib.DBConfig.PostgreSQL.ActiveQueryLimit = 10000
 			lib.DBConfig.PostgreSQL.ConnectionLimitPercent = 100
 
-			CheckActivity(lib.Logger)
+			CheckProcessCount(lib.Logger)
+			CheckActiveQueryCount(lib.Logger)
+			CheckConnectionPercent(lib.Logger)
 
 			for _, moduleName := range []string{"Process", "ActiveQuery", "Connection"} {
 				alarm, err := lib.GetLastZulipAlarm(pluginName, moduleName)
@@ -89,11 +92,6 @@ func TestCheckLongRunningQueries(t *testing.T) {
 			lib.DBConfig.PostgreSQL.LongQuery.Enabled = true
 			lib.DBConfig.PostgreSQL.LongQuery.Duration = 1
 
-			// Neutral thresholds so only LongQuery is exercised here.
-			lib.DBConfig.PostgreSQL.ProcessLimit = 10000
-			lib.DBConfig.PostgreSQL.ActiveQueryLimit = 10000
-			lib.DBConfig.PostgreSQL.ConnectionLimitPercent = 100
-
 			// Run pg_sleep on a second connection so pg_stat_activity shows
 			// an active query older than the 1 second limit.
 			sleeper, err := pgx.Connect(context.Background(), connectionStringFor(cluster))
@@ -111,7 +109,7 @@ func TestCheckLongRunningQueries(t *testing.T) {
 			// Give the query time to start and cross the 1s limit.
 			time.Sleep(3 * time.Second)
 
-			CheckActivity(lib.Logger)
+			CheckLongRunningQueries(lib.Logger)
 
 			alarm, err := lib.GetLastZulipAlarm(pluginName, "LongQuery")
 			if err != nil {
@@ -126,7 +124,7 @@ func TestCheckLongRunningQueries(t *testing.T) {
 			<-sleepDone
 			time.Sleep(1 * time.Second)
 
-			CheckActivity(lib.Logger)
+			CheckLongRunningQueries(lib.Logger)
 
 			alarm, err = lib.GetLastZulipAlarm(pluginName, "LongQuery")
 			if err != nil {
