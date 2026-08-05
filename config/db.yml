@@ -1,59 +1,3 @@
-mysql:
-  # Process alarm threshold
-  process-limit: 50
-  # If credentals are not provided nor working, defaults to mysqld.sock and root user with no password
-  credentials:
-    user: "root"
-    password: "password"
-    host: "localhost"
-    port: 3306
-    dbname: "mysql"
-    network: "tcp"
-    socket: "/var/run/mysqld/mysqld.sock"
-    allow-native-passwords: true
-  auto-repair: # If enabled, monokit will run "mysqlcheck --auto-repair --all-databases" based on the weekly schedule.
-    enabled: true
-    day: "Sun" # Mon Tue Wed Thu Fri Sat Sun
-    hour: "05:00" # 24h format, e.g. 05:00, 17:00
-  pmm-agent:
-    enabled: false
-  alarm:
-    enabled: true
-  # Not implemented yet, can be added in the future versions
-  cluster:
-    enabled: false
-    cluster_type: "" # ndb, xtradb
-    size: 3
-    receive-queue-limit: 10
-    flow-control-limit: 0.20
-
-mariadb:
-  enabled: true
-  process-limit: 50
-  credentials:
-    user: "root"
-    password: "password"
-    host: "localhost"
-    port: 3306
-    dbname: "mysql"
-    network: "tcp"
-    socket: "/var/run/mysqld/mysqld.sock"
-    allow-native-passwords: true
-  cluster:
-    enabled: false
-    cluster-type: "galera" # galera
-    size: 3
-    receive-queue-limit: 10
-    flow-control-limit: 0.20
-  auto-repair: # If enabled, monokit will run "mariadb-check --auto-repair --all-databases" based on the weekly schedule.
-    enabled: true
-    day: "Sun" # Mon Tue Wed Thu Fri Sat Sun
-    hour: "05:00" # 24h format, e.g. 05:00, 17:00
-  pmm-agent:
-    enabled: false
-  alarm:
-    enabled: true
-
 postgresql:
   process-limit: 50 # Process alarm threshold
   active-query-limit: 30 # Active queries at the same time
@@ -74,6 +18,21 @@ postgresql:
     enabled: false
   alarm:
     enabled: true
+  wal-g:
+    enabled: false
+    verify-hour: "03:00" # 24h HH:MM; the daily wal-g verify runs when the plugin runs in this minute
+    run-as-user: "postgres" # wal-g is executed as this OS user when the plugin runs as root
+  patroni:
+    enabled: false
+    config-path: "/etc/patroni/patroni.yml"
+    leader-switch-hook: "" # shell command executed when this node becomes the leader
+  consul:
+    enabled: false
+    url: "http://localhost:8500"
+    dns-port: 8600
+  haproxy:
+    enabled: false
+    config-path: "/etc/haproxy/haproxy.cfg"
   # Not implemented yet, can be added in the future versions
   cluster:
     enabled: false
