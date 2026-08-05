@@ -60,7 +60,17 @@ func main() {
 		logger.Info().Msg("PostgreSQL appears to be running in Docker. This may affect connection methods and performance.")
 	}
 
+	LogUptime(logger)
+
 	CheckActivity(logger)
+
+	CheckWalG(logger)
+
+	CheckPatroni(logger)
+
+	CheckConsul(logger)
+
+	CheckHAProxy(logger)
 
 	CheckPMM(logger)
 }

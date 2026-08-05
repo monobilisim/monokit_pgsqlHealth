@@ -39,29 +39,70 @@ build-target goos goarch:
     echo "Building {{plugin}} {{version}} for {{goos}} {{goarch}}"
     GOOS={{goos}} GOARCH={{goarch}} go build -ldflags "-X 'main.version={{version}}'" -o "$out"
 
-# Run this plugin's tests inside a Podman container (boots systemd as PID 1).
-# `just test` runs every test; `just test TestFoo` runs only matching tests.
+# Run every test suite one by one.
+test: test-postgres test-walg test-patroni test-consul test-haproxy
+
+# Connection, activity, long-query and uptime tests against PostgreSQL 12, 15 and 18.
+test-postgres filter="": (test-suite "postgres" filter)
+
+# WAL-G verification tests against a stubbed wal-g binary.
+test-walg filter="": (test-suite "walg" filter)
+
+# Patroni cluster tests against a stubbed Patroni REST API.
+test-patroni filter="": (test-suite "patroni" filter)
+
+# Consul tests against a stubbed Consul HTTP API.
+test-consul filter="": (test-suite "consul" filter)
+
+# HAProxy tests against the real haproxy service via systemd.
+test-haproxy filter="": (test-suite "haproxy" filter)
+
+# Run one test suite inside a Podman container (boots systemd as PID 1).
+# Each suite has its own Containerfile.<suite> so CI can run them in
+# parallel: postgres (PG 12/15/18 matrix), walg, patroni, consul, haproxy.
+# `just test-suite postgres TestConnectPSQL` narrows the suite to one test.
 # Tests ALWAYS run inside Podman — never directly on the host.
-test filter="":
+test-suite suite filter="":
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p "{{justfile_directory()}}/logs"
-    podman build -t {{image}} -f Containerfile .
+
+    suite={{ quote(suite) }}
+    case "$suite" in
+        postgres) default_run='TestConnectPSQL|TestCheckActivity|TestCheckLongRunningQueries|TestGetUptime' ;;
+        walg)     default_run='TestCheckWalG|TestParseWalVerifyStatus' ;;
+        patroni)  default_run='TestCheckPatroni' ;;
+        consul)   default_run='TestCheckConsul' ;;
+        haproxy)  default_run='TestCheckHAProxy|TestParseHAProxyBindPorts' ;;
+        *) echo "unknown test suite: $suite" >&2; exit 1 ;;
+    esac
+
+    run="{{ filter }}"
+    [ -z "$run" ] && run="$default_run"
+
+    mkdir -p "{{ justfile_directory() }}/logs"
+
+    podman build -t "{{ image }}-$suite" -f "Containerfile.$suite" .
     podman run --rm -t \
         --systemd=always \
         --tmpfs /run \
         --tmpfs /run/lock \
-        -v {{image}}-go-mod-cache:/go/pkg/mod \
-        -v {{image}}-go-build-cache:/root/.cache/go-build \
-        -v "{{justfile_directory()}}/logs":/artifacts \
-        -e TEST_RUN="{{filter}}" \
+        -v {{ image }}-go-mod-cache:/go/pkg/mod \
+        -v {{ image }}-go-build-cache:/root/.cache/go-build \
+        -v "{{ justfile_directory() }}/logs":/artifacts \
+        -e TEST_RUN="$run" \
+        -e TEST_SUITE="$suite" \
         -e HOST_UID="$(id -u)" \
         -e HOST_GID="$(id -g)" \
-        {{image}}
+        "{{ image }}-$suite"
 
 # Build then run the plugin, forwarding any extra ARGS (e.g. `just run -v`).
 run *args: build
     "{{bindir}}/{{plugin}}" {{args}}
+
+# Update the monokit_lib dependency to the latest commit and tidy go.mod.
+update-lib:
+    go get github.com/monobilisim/monokit_lib@latest
+    go mod tidy
 
 # Remove this plugin's build artifacts from ./bin.
 clean:

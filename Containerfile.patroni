@@ -1,0 +1,34 @@
+FROM golang:1.25-trixie
+
+ENV container=podman
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CGO_ENABLED=1
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        systemd \
+        systemd-sysv \
+        dbus && \
+    rm -rf /var/lib/apt/lists/*
+
+STOPSIGNAL SIGRTMIN+3
+
+COPY . .
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+# lib.InitConfig reads config from /etc/mono.
+RUN mkdir -p /etc/mono && \
+    cp config/* /etc/mono/ && \
+    chmod +x scripts/collect-test-artifacts.sh
+
+RUN cp scripts/tests.service scripts/exit-code.service /etc/systemd/system/ && \
+    cp scripts/exit.target /etc/systemd/system/ && \
+    systemctl enable tests.service exit-code.service
+
+ENTRYPOINT ["/sbin/init"]

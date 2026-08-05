@@ -37,6 +37,12 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # One job per test suite; each suite has its own Containerfile so they
+      # build and run in parallel.
+      matrix:
+        suite: [postgres, walg, patroni, consul, haproxy]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
@@ -49,14 +55,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman
 
-      - name: Run tests (inside Podman)
-        run: just test
+      - name: Run ${{ matrix.suite }} tests (inside Podman)
+        run: just test-${{ matrix.suite }}
 
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: test-artifacts
+          name: test-artifacts-${{ matrix.suite }}
           path: logs/
 
   release:

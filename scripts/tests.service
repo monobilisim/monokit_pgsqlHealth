@@ -10,7 +10,7 @@ Environment="PATH=/usr/local/go/bin:/go/bin:/usr/local/sbin:/usr/local/bin:/usr/
 Environment="GOPATH=/go"
 Environment="GOCACHE=/root/.cache/go-build"
 # TEST_RUN = optional -run filter, supplied by `just test` via `podman run -e ...`.
-PassEnvironment=TEST_RUN HOST_UID HOST_GID
+PassEnvironment=TEST_RUN TEST_SUITE HOST_UID HOST_GID
 
 ExecStart=/bin/bash -c '\
   set -o pipefail; \
