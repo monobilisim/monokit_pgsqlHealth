@@ -29,6 +29,8 @@ PostgreSQL health plugin. Feature parity with monokit1 `pgsqlHealth/`.
 - [X] PMM agent check
 - [ ] Docker-hosted PostgreSQL detection follow-ups (docker_check.go only logs today)
 - [ ] Fallback connection-count query for PostgreSQL < 9.6 (no backend_type column)
+- [ ] Health summary box output, compact and full (depends on the lib renderer)
+- [ ] Health data POST to the server API (depends on base client/server API)
 
 ## Tests
 
