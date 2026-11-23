@@ -40,9 +40,9 @@ build-target goos goarch:
     GOOS={{goos}} GOARCH={{goarch}} go build -ldflags "-X 'main.version={{version}}'" -o "$out"
 
 # Run every test suite one by one.
-test: test-postgres test-walg test-patroni test-consul test-haproxy
+test: test-postgres test-walg test-patroni test-consul test-haproxy test-docker
 
-# Connection, activity, long-query and uptime tests against PostgreSQL 12, 15 and 18.
+# Connection, activity, long-query and uptime tests against PostgreSQL 9.6, 12, 15 and 18.
 test-postgres filter="": (test-suite "postgres" filter)
 
 # WAL-G verification tests against a stubbed wal-g binary.
@@ -57,9 +57,13 @@ test-consul filter="": (test-suite "consul" filter)
 # HAProxy tests against the real haproxy service via systemd.
 test-haproxy filter="": (test-suite "haproxy" filter)
 
+# Docker-hosted PostgreSQL tests against a stubbed docker CLI.
+test-docker filter="": (test-suite "docker" filter)
+
 # Run one test suite inside a Podman container (boots systemd as PID 1).
 # Each suite has its own Containerfile.<suite> so CI can run them in
-# parallel: postgres (PG 12/15/18 matrix), walg, patroni, consul, haproxy.
+# parallel: postgres (PG 9.6/12/15/18 matrix), walg, patroni, consul,
+# haproxy, docker.
 # `just test-suite postgres TestConnectPSQL` narrows the suite to one test.
 # Tests ALWAYS run inside Podman — never directly on the host.
 test-suite suite filter="":
@@ -68,11 +72,12 @@ test-suite suite filter="":
 
     suite={{ quote(suite) }}
     case "$suite" in
-        postgres) default_run='TestConnectPSQL|TestCheckActivity|TestCheckLongRunningQueries|TestGetUptime' ;;
+        postgres) default_run='TestConnectPSQL|TestCheckUp|TestCheckActivity|TestCheckLongRunningQueries|TestActivityFormatting|TestGetUptime' ;;
         walg)     default_run='TestCheckWalG|TestParseWalVerifyStatus' ;;
         patroni)  default_run='TestCheckPatroni' ;;
         consul)   default_run='TestCheckConsul' ;;
         haproxy)  default_run='TestCheckHAProxy|TestParseHAProxyBindPorts' ;;
+        docker)   default_run='TestDocker' ;;
         *) echo "unknown test suite: $suite" >&2; exit 1 ;;
     esac
 

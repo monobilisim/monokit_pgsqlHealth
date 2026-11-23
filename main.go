@@ -43,7 +43,14 @@ func main() {
 
 	logger.Info().Msg("Starting PostgreSQL Health monitoring plugin...")
 
-	Connection, err = ConnectPSQL(logger)
+	containers, err := FindPostgresContainers(logger)
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to list Docker containers, skipping PostgreSQL container check.")
+	} else {
+		CheckPostgresContainers(logger, containers)
+	}
+
+	Connection, err = CheckUp(logger, containers)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to establish PostgreSQL connection. Exiting plugin.")
 		Connection = nil
@@ -53,11 +60,6 @@ func main() {
 	if Connection == nil {
 		logger.Error().Msg("PostgreSQL connection is not established. Exiting plugin.")
 		return
-	}
-
-	psqlInDocker := IsPsqlInDocker(logger)
-	if psqlInDocker {
-		logger.Info().Msg("PostgreSQL appears to be running in Docker. This may affect connection methods and performance.")
 	}
 
 	LogUptime(logger)
@@ -72,7 +74,7 @@ func main() {
 
 	CheckConnectionPercent(logger)
 
-	if lib.DBConfig.PostgreSQL.WalG.Enabled && walgDue() && hasWalG() {
+	if lib.DBConfig.PostgreSQL.WalG.Enabled && walgDue() && findWalG(logger, containers) {
 		CheckWalGVerify(logger)
 		CheckWalGBackupAge(logger)
 	}

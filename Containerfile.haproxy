@@ -15,6 +15,12 @@ RUN apt-get update && \
         haproxy && \
     rm -rf /var/lib/apt/lists/*
 
+# The packaged unit bind-mounts /dev/log into haproxy's chroot, which needs a
+# mount namespace rootless Podman can't always set up (226/NAMESPACE). The
+# tests don't need syslog, so drop the bind.
+RUN mkdir -p /etc/systemd/system/haproxy.service.d && \
+    printf '[Service]\nBindReadOnlyPaths=\n' > /etc/systemd/system/haproxy.service.d/container.conf
+
 STOPSIGNAL SIGRTMIN+3
 
 COPY . .
@@ -27,8 +33,9 @@ RUN mkdir -p /etc/mono && \
     cp config/* /etc/mono/ && \
     chmod +x scripts/collect-test-artifacts.sh
 
-RUN cp scripts/tests.service scripts/exit-code.service /etc/systemd/system/ && \
-    cp scripts/exit.target /etc/systemd/system/ && \
-    systemctl enable tests.service exit-code.service
+# tests.service ends with `systemctl exit <go test status>`, which systemd's
+# own exit.target turns into the container's exit code.
+RUN cp scripts/tests.service /etc/systemd/system/ && \
+    systemctl enable tests.service
 
 ENTRYPOINT ["/sbin/init"]

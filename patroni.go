@@ -355,7 +355,9 @@ func SavePatroniMembers(logger zerolog.Logger) {
 		return
 	}
 
-	if err := lib.DB.Where("1 = 1").Delete(&lib.PatroniClusterMember{}).Error; err != nil {
+	// Unscoped: the model has gorm's soft delete, and soft-deleted rows would
+	// still hold the unique member names, failing every insert below.
+	if err := lib.DB.Unscoped().Where("1 = 1").Delete(&lib.PatroniClusterMember{}).Error; err != nil {
 		logger.Error().Err(err).Msg("Failed to clear previous Patroni cluster state")
 		return
 	}

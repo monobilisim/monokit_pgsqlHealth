@@ -20,9 +20,8 @@ ExecStart=/bin/bash -c '\
     TEST=true go test -v -count=1 ./... 2>&1 | tee /var/log/monokit2.log; \
   fi; \
   EXIT_CODE=$$?; \
-  echo $$EXIT_CODE > /run/test-exit-code; \
   ./scripts/collect-test-artifacts.sh; \
-  systemctl poweroff; \
+  systemctl exit $$EXIT_CODE; \
   exit $$EXIT_CODE'
 
 StandardOutput=journal+console

@@ -21,7 +21,7 @@ postgresql:
   wal-g:
     enabled: false
     verify-hour: "03:00" # 24h HH:MM; the daily wal-g verify runs when the plugin runs in this minute
-    run-as-user: "postgres" # wal-g is executed as this OS user when the plugin runs as root
+    run-as-user: "postgres" # wal-g runs as this OS user (su when the plugin runs as root, docker exec --user when wal-g is only in the PostgreSQL container)
   patroni:
     enabled: false
     config-path: "/etc/patroni/patroni.yml"

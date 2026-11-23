@@ -42,7 +42,7 @@ jobs:
       # One job per test suite; each suite has its own Containerfile so they
       # build and run in parallel.
       matrix:
-        suite: [postgres, walg, patroni, consul, haproxy]
+        suite: [postgres, walg, patroni, consul, haproxy, docker]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6

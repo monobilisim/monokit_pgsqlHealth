@@ -16,18 +16,30 @@ RUN apt-get update && \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# PostgreSQL 12, 15 and 18 from PGDG — the version matrix for the tests.
+# PostgreSQL 9.6, 12, 15 and 18 from PGDG — the version matrix for the tests.
+# 9.6 is EOL and only in the PGDG archive; it is the last version without
+# pg_stat_activity.backend_type, which the activity checks fall back for.
 RUN install -d /usr/share/postgresql-common/pgdg && \
     curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
         https://www.postgresql.org/media/keys/ACCC4CF8.asc && \
     echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
         > /etc/apt/sources.list.d/pgdg.list && \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt-archive.postgresql.org/pub/repos/apt bookworm-pgdg-archive main" \
+        > /etc/apt/sources.list.d/pgdg-archive.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+        postgresql-9.6 \
         postgresql-12 \
         postgresql-15 \
         postgresql-18 && \
     rm -rf /var/lib/apt/lists/*
+
+# postgresql-common only creates a main cluster for the newest version, so
+# create the rest; each gets the next free port.
+RUN for version in $(ls /usr/lib/postgresql); do \
+        [ -d "/etc/postgresql/$version/main" ] || pg_createcluster "$version" main; \
+    done && \
+    pg_lsclusters
 
 STOPSIGNAL SIGRTMIN+3
 
@@ -41,8 +53,9 @@ RUN mkdir -p /etc/mono && \
     cp config/* /etc/mono/ && \
     chmod +x scripts/collect-test-artifacts.sh
 
-RUN cp scripts/tests.service scripts/exit-code.service /etc/systemd/system/ && \
-    cp scripts/exit.target /etc/systemd/system/ && \
-    systemctl enable tests.service exit-code.service
+# tests.service ends with `systemctl exit <go test status>`, which systemd's
+# own exit.target turns into the container's exit code.
+RUN cp scripts/tests.service /etc/systemd/system/ && \
+    systemctl enable tests.service
 
 ENTRYPOINT ["/sbin/init"]

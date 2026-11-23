@@ -6,6 +6,8 @@
 // and resolves them when it is OK again. The newest basebackup's age is
 // checked as well. When the plugin runs as root, wal-g is executed as
 // wal-g.run-as-user so it can use peer authentication like the postgres user.
+// Without wal-g on the host it runs inside the PostgreSQL container instead
+// (docker exec, as wal-g.run-as-user), where its settings usually live.
 package main
 
 import (
@@ -220,21 +222,64 @@ func walgDue() bool {
 	return time.Now().Format("15:04") == verifyHour
 }
 
-// hasWalG checks if the wal-g binary is available.
-func hasWalG() bool {
-	_, err := exec.LookPath("wal-g")
-	return err == nil
+// walgContainer is the container wal-g runs in, empty when it runs on the
+// host.
+var walgContainer string
+
+// findWalG reports whether wal-g can run: on the host, or else inside the one
+// running PostgreSQL container, which it stores in walgContainer.
+func findWalG(logger zerolog.Logger, containers []pgContainer) bool {
+	walgContainer = ""
+
+	if _, err := exec.LookPath("wal-g"); err == nil {
+		return true
+	}
+
+	var running []pgContainer
+	for _, container := range containers {
+		if container.State == "running" {
+			running = append(running, container)
+		}
+	}
+
+	if len(running) > 1 {
+		logger.Warn().Int("containers", len(running)).Msg("wal-g is not on the host and several PostgreSQL containers are running, skipping WAL-G checks")
+		return false
+	}
+
+	if len(running) == 0 {
+		logger.Debug().Msg("wal-g not found, skipping WAL-G checks")
+		return false
+	}
+
+	if err := exec.Command("docker", "exec", running[0].ID, "sh", "-c", "command -v wal-g").Run(); err != nil {
+		logger.Debug().Str("container", running[0].Name).Msg("wal-g not found on the host or in the PostgreSQL container, skipping WAL-G checks")
+		return false
+	}
+
+	logger.Info().Str("container", running[0].Name).Msg("Running wal-g inside the PostgreSQL container")
+	walgContainer = running[0].ID
+	return true
 }
 
-// runWalG executes wal-g with the given arguments. When the plugin runs as
+// runWalG executes wal-g with the given arguments. In a container it runs
+// through `docker exec` as run-as-user. On the host, when the plugin runs as
 // root and run-as-user is set, the command is wrapped with `su` so wal-g sees
 // the database user's environment and peer authentication.
 func runWalG(runAsUser string, args ...string) (string, error) {
 	var cmd *exec.Cmd
 
-	if runAsUser != "" && os.Geteuid() == 0 {
+	switch {
+	case walgContainer != "":
+		dockerArgs := []string{"exec"}
+		if runAsUser != "" {
+			dockerArgs = append(dockerArgs, "--user", runAsUser)
+		}
+		dockerArgs = append(dockerArgs, walgContainer, "wal-g")
+		cmd = exec.Command("docker", append(dockerArgs, args...)...)
+	case runAsUser != "" && os.Geteuid() == 0:
 		cmd = exec.Command("su", "-s", "/bin/sh", runAsUser, "-c", "wal-g "+strings.Join(args, " "))
-	} else {
+	default:
 		cmd = exec.Command("wal-g", args...)
 	}
 

@@ -27,8 +27,9 @@ RUN mkdir -p /etc/mono && \
     cp config/* /etc/mono/ && \
     chmod +x scripts/collect-test-artifacts.sh
 
-RUN cp scripts/tests.service scripts/exit-code.service /etc/systemd/system/ && \
-    cp scripts/exit.target /etc/systemd/system/ && \
-    systemctl enable tests.service exit-code.service
+# tests.service ends with `systemctl exit <go test status>`, which systemd's
+# own exit.target turns into the container's exit code.
+RUN cp scripts/tests.service /etc/systemd/system/ && \
+    systemctl enable tests.service
 
 ENTRYPOINT ["/sbin/init"]

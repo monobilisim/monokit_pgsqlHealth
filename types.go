@@ -20,6 +20,38 @@ type UptimeInfo struct {
 	Uptime    time.Duration
 }
 
+// pgContainer is a Docker container running a PostgreSQL image.
+type pgContainer struct {
+	ID        string
+	Name      string
+	Image     string
+	State     string // running, restarting, paused, exited, created, dead
+	Health    string // healthy, unhealthy, starting; empty without a healthcheck
+	ExitCode  int
+	HostPorts []int
+}
+
+// dockerInspect is the part of `docker inspect` output the checks read.
+type dockerInspect struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Config struct {
+		Image string `json:"Image"`
+	} `json:"Config"`
+	State struct {
+		Status   string `json:"Status"`
+		ExitCode int    `json:"ExitCode"`
+		Health   *struct {
+			Status string `json:"Status"`
+		} `json:"Health"`
+	} `json:"State"`
+	HostConfig struct {
+		PortBindings map[string][]struct {
+			HostPort string `json:"HostPort"`
+		} `json:"PortBindings"`
+	} `json:"HostConfig"`
+}
+
 type walgBackup struct {
 	BackupName string    `json:"backup_name"`
 	Time       time.Time `json:"time"`
